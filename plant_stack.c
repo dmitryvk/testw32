@@ -10,7 +10,13 @@
 
 DWORD WINAPI thread_fn(void * arg)
 {
-	while (1);
+	int z = 0;
+	Sleep(10);
+	while (1) {
+		Sleep(10);
+		printf("doing nothing\n");
+		for (z = 0; z < 1000000000; ++z);
+	}
 	return 0;
 }
 
@@ -88,6 +94,8 @@ int main(int argc, char * argv[])
 
 	printf("Will plant into thread = 0x%x\n", (int)thread_id);
 
+	Sleep(100);
+	
 	plant_call(thread, planted_fn);
 	
 	Sleep(1000);
