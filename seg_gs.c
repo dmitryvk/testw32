@@ -53,26 +53,27 @@ int AllocateLdtSegment(void * base, int size)
 		return 0;
 }
 
-// void SaveGsIntoTls(int selector)
-// {
-	// asm("movl %0, %%fs:0x14"::"r"(selector));
-// }
+void SaveGsIntoTls(int selector)
+{
+	asm("movl %0, %%fs:0x14"::"r"(selector));
+}
 
-// void ReloadGs()
-// {
-	// int selector;
-	// asm("movl %%fs:0x14, %0":"=r"(selector):);
-	// asm("movl %0, %%fs:0x14"::"r"(selector));
-// }
+void ReloadGs()
+{
+	int selector;
+	asm("movl %%fs:0x14, %0":"=r"(selector):);
+	asm("movl %0, %%gs"::"r"(selector));
+}
 
-// int ReadGsRelative(int offset)
-// {
-	// int result;
-	// asm("movl %%gs:(%0), %1": "=r"(result):"r"(offset));
-	// return result;
-// }
+int ReadGsRelative(int offset)
+{
+	int result;
+	asm("movl %%gs:(%0), %1": "=r"(result):"r"(offset));
+	return result;
+}
 
-// void WriteGsRelative(int offset, int value)
-// {
-	// asm("mov %0, %%gs:(%1)":: "r"(value), "r"(offset));
-// }
+void WriteGsRelative(int offset, int value)
+{
+	asm("mov %0, %%gs:(%1)":: "r"(value), "r"(offset));
+}
+

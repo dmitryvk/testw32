@@ -63,7 +63,9 @@ void LdtOutput()
 
 DWORD WINAPI thread_fn(void * arg)
 {
-	int selector = (int)arg, r1, r2;
+	int selector = (int)arg, r1, r2, i;
+	CRITICAL_SECTION cs;
+	InitializeCriticalSection(&cs);
 	printf("selector = 0x%x\n", selector);
 	printf("saving into tls\n");
 	SaveGsIntoTls(selector);
@@ -71,10 +73,23 @@ DWORD WINAPI thread_fn(void * arg)
 	ReloadGs();
 	printf("reading (and loading gs)\n");
 	ReloadGs();
-	r1 = ReadGsRelative(0);
-	r2 = ReadGsRelative(4);
-	printf("Read from thread: 0x%x 0x%x\n", r1, r2);
+	asm("movl %%esi, %0":"=r"(i):);
+	printf("esi = 0x%x\n", i);
 	ReloadGs();
+	while (1) {
+		EnterCriticalSection(&cs);
+		ReloadGs();
+		for (i = 0; i < 100000000; ++i) {
+			ReloadGs();
+			r1 = ReadGsRelative(0);
+			ReloadGs();
+			r2 = ReadGsRelative(4);
+		}
+		LeaveCriticalSection(&cs);
+		ReloadGs();
+		printf("Read from thread: 0x%x 0x%x\n", r1, r2);
+		ReloadGs();
+	}
 	WriteGsRelative(8, 123);
 	return 0;
 }
@@ -120,6 +135,19 @@ int main (int argc, char *argv[])
 	printf("Starting thread");
 	
 	t1 = CreateThread(NULL, 0, thread_fn, (void*)selector, 0, NULL);
+	
+	Sleep(5000);
+	printf("Suspending thread\n");
+	SuspendThread(t1);
+	{
+		CONTEXT context;
+		context.ContextFlags = CONTEXT_FULL;
+		GetThreadContext(t1, &context);
+		int gs = context.SegGs;
+		printf("%%GS returned by GetThreadContext = 0x%x\n", gs);
+	}
+	printf("Resuming thread\n");
+	ResumeThread(t1);
 	
 	WaitForSingleObject(t1, INFINITE);
 
