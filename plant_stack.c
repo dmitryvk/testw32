@@ -60,9 +60,7 @@ void plant_call(HANDLE thread, planted_function_t fn)
 		context.Esp -= 4;
 		*((int*)((void*)context.Esp - 0)) = context.Eip;
 		context.Esp -= 4;
-		*((int*)((void*)context.Esp - 0)) = context.Eax;
-		context.Eax = (int)(void*)fn;
-		
+		*((int*)((void*)context.Esp - 0)) = (int)(void*)fn;
 		// setting %EIP
 		context.Eip = (int)(void*)planted_trampoline;
 	}
