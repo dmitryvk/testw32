@@ -1,0 +1,96 @@
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <winnt.h>
+
+// #include "nt.h"
+// #include "seg_gs.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+DWORD WINAPI thread_fn(void * arg)
+{
+	while (1);
+	return 0;
+}
+
+typedef void (*planted_function_t)(void * arg);
+
+extern void planted_trampoline();
+
+// planting can only occur in a user mode; do not attempt to plant function call when thread is in kernel
+void plant_call(HANDLE thread, planted_function_t fn)
+{
+	CONTEXT context;
+	if (SuspendThread(thread) == -1)
+	{
+		printf("Unable to suspend thread 0x%x\n", (int)thread);
+		return;
+	}
+	context.ContextFlags = CONTEXT_FULL;
+	if (GetThreadContext(thread, &context) == 0)
+	{
+		printf("Unable to get thread context for thread 0x%x\n", (int) thread);
+		ResumeThread(thread);
+		return;
+	}
+	
+	{
+		//planting
+		//calling convention is as follow:
+		// PUSH unsaved registers
+		// PUSH last arg
+		// ...
+		// PUSH first arg
+		// PUSH return address           }
+		// SET %EIP to first instruction } CALL does this
+		// POP unsaved registers
+		
+		// we should save registers (TODO!)
+		
+		// we have no args, so don't push
+		
+		// pushing return address (the current EIP, which points to the next instruction)
+		context.Esp -= 4;
+		*((int*)((void*)context.Esp - 0)) = context.Eip;
+		context.Esp -= 4;
+		*((int*)((void*)context.Esp - 0)) = context.Eax;
+		context.Eax = (int)(void*)fn;
+		
+		// setting %EIP
+		context.Eip = (int)(void*)planted_trampoline;
+	}
+	if (SetThreadContext(thread, &context) == 0)
+	{
+		printf("Unable to get thread context for thread 0x%x\n", (int) thread);
+		ResumeThread(thread);
+		return;
+	}
+	
+	if (ResumeThread(thread) == -1)
+	{
+		printf("Unable to resume thread 0x%x\n", (int)thread);
+		return;
+	}
+	printf("Function planted to thread 0x%x\n", (int)thread);
+}
+
+void planted_fn()
+{
+	int current_thread = (int)GetCurrentThreadId();
+	printf("Called from thread = 0x%x\n", current_thread);
+}
+
+int main(int argc, char * argv[])
+{
+	DWORD thread_id;
+	HANDLE thread = CreateThread(NULL, 0, thread_fn, NULL, 0, &thread_id);
+
+	printf("Will plant into thread = 0x%x\n", (int)thread_id);
+
+	plant_call(thread, planted_fn);
+	
+	Sleep(1000);
+	
+	return 0;
+}
