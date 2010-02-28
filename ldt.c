@@ -79,7 +79,7 @@ DWORD WINAPI thread_fn(void * arg)
 	while (1) {
 		EnterCriticalSection(&cs);
 		ReloadGs();
-		for (i = 0; i < 100000000; ++i) {
+		for (i = 0; i < 10000000; ++i) {
 			ReloadGs();
 			r1 = ReadGsRelative(0);
 			ReloadGs();
@@ -87,7 +87,7 @@ DWORD WINAPI thread_fn(void * arg)
 		}
 		LeaveCriticalSection(&cs);
 		ReloadGs();
-		printf("Read from thread: 0x%x 0x%x\n", r1, r2);
+		printf("Read from thread (selector = 0x%x): 0x%x 0x%x\n", selector, r1, r2);
 		ReloadGs();
 	}
 	WriteGsRelative(8, 123);
@@ -101,53 +101,19 @@ int main (int argc, char *argv[])
 	volatile int tmp1, tmp2;
     HANDLE t1;
 	init_nt();
+
+for (tmp1 = 0; tmp1 < 10; ++tmp1) {
 	
 #define REGION_SIZE (512 * 1024)
 	region = VirtualAlloc(NULL, REGION_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     selector = AllocateLdtSegment(region, REGION_SIZE);
 
-	printf("Allocated selector 0x%x\n", selector);
-	printf("Loading into gs\n");
-	SaveGsIntoTls(selector);
-	ReloadGs();
-	printf("Writing values\n");
-	ReloadGs();
-	for (tmp1 = 0; tmp1 < 10; ++tmp1)
-		WriteGsRelative(4*tmp1, 1 + 2 * tmp1);
-	printf("Reading values\n");
-	for (tmp1 = 0; tmp1 < 10; ++tmp1)
-	{
-		ReloadGs();
-		tmp2 = ReadGsRelative(4*tmp1);
-		printf("%d ", tmp2);
-	}
-	printf("\n");
-	ReloadGs();
-	WriteGsRelative(4, (int)selector);
-	WriteGsRelative(0, (int)region);
-	ReloadGs();
-	tmp1 = ReadGsRelative(0);
-	printf(" => 0x%x, expected 0x%x\n", tmp1, (int)region);
-	ReloadGs();
-	tmp2 = ReadGsRelative(4);
-	printf(" => 0x%x, expected 0x%x\n", tmp2, (int)selector);
-	// printf("Read from main: 0x%x (expected 0x%x), 0x%x (expected 0x%x)\n", tmp1, (int)region, tmp2, (int)selector);
-	printf("Starting thread");
+	*((int*)region) = (int)selector;
+	*((int*)(region+4)) = (int)region;
 	
 	t1 = CreateThread(NULL, 0, thread_fn, (void*)selector, 0, NULL);
-	
-	Sleep(5000);
-	printf("Suspending thread\n");
-	SuspendThread(t1);
-	{
-		CONTEXT context;
-		context.ContextFlags = CONTEXT_FULL;
-		GetThreadContext(t1, &context);
-		int gs = context.SegGs;
-		printf("%%GS returned by GetThreadContext = 0x%x\n", gs);
+
 	}
-	printf("Resuming thread\n");
-	ResumeThread(t1);
 	
 	WaitForSingleObject(t1, INFINITE);
 
