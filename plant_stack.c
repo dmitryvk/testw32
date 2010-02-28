@@ -25,7 +25,7 @@ typedef void (*planted_function_t)(void * arg);
 extern void planted_trampoline();
 
 // planting can only occur in a user mode; do not attempt to plant function call when thread is in kernel
-void plant_call(HANDLE thread, planted_function_t fn)
+void plant_call(HANDLE thread, planted_function_t fn, void * arg)
 {
 	CONTEXT context;
 	if (SuspendThread(thread) == -1)
@@ -60,6 +60,8 @@ void plant_call(HANDLE thread, planted_function_t fn)
 		context.Esp -= 4;
 		*((int*)((void*)context.Esp - 0)) = context.Eip;
 		context.Esp -= 4;
+		*((int*)((void*)context.Esp - 0)) = (int)arg;
+		context.Esp -= 4;
 		*((int*)((void*)context.Esp - 0)) = (int)(void*)fn;
 		// setting %EIP
 		context.Eip = (int)(void*)planted_trampoline;
@@ -79,10 +81,10 @@ void plant_call(HANDLE thread, planted_function_t fn)
 	printf("Function planted to thread 0x%x\n", (int)thread);
 }
 
-void planted_fn()
+void planted_fn(void* arg)
 {
 	int current_thread = (int)GetCurrentThreadId();
-	printf("Called from thread = 0x%x\n", current_thread);
+	printf("Called from thread = 0x%x with arg = \"%s\"\n", current_thread, (char*)arg);
 }
 
 int main(int argc, char * argv[])
@@ -94,7 +96,7 @@ int main(int argc, char * argv[])
 
 	Sleep(100);
 	
-	plant_call(thread, planted_fn);
+	plant_call(thread, planted_fn, (void*)"testing planting");
 	
 	Sleep(1000);
 	
