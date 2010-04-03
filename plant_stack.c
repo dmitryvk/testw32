@@ -11,7 +11,9 @@
 DWORD WINAPI thread_fn(void * arg)
 {
 	int z = 0;
-	Sleep(10);
+	fprintf(stderr, "Entering sleep\n");
+	Sleep(1000);
+	fprintf(stderr, "Returned from sleep\n");
 	while (1) {
 		Sleep(10);
 		printf("doing nothing\n");
@@ -95,10 +97,12 @@ int main(int argc, char * argv[])
 	printf("Will plant into thread = 0x%x\n", (int)thread_id);
 
 	Sleep(100);
+
+	fprintf(stderr, "planting\n");
 	
 	plant_call(thread, planted_fn, (void*)"testing planting");
 	
-	Sleep(1000);
+	WaitForSingleObject(thread, INFINITE);
 	
 	return 0;
 }
