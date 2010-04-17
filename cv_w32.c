@@ -1,27 +1,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include "cv.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 
 typedef enum State { Initial, ServerRequest, ClientResponse } State;
-
-struct thread_wakeup {
-  HANDLE event;
-  struct thread_wakeup *next;
-};
-
-struct condvar {
-  CRITICAL_SECTION wakeup_lock;
-  struct thread_wakeup *first_wakeup;
-  struct thread_wakeup *last_wakeup;
-};
-
-void cv_init(struct condvar* cv);
-void cv_destroy(struct condvar* cv);
-void cv_wait(struct condvar* cv, CRITICAL_SECTION* cs);
-void cv_signal(struct condvar* cv);
-void cv_bcast(struct condvar* cv);
 
 typedef struct ThreadData {
 	CRITICAL_SECTION m;
@@ -78,12 +63,17 @@ DWORD WINAPI client_thread(void * arg)
 	return 0;
 }
 
+VOID CALLBACK test_apc(ULONG_PTR param)
+{
+  fprintf(stderr, "APC!!!!! %s\n", (unsigned char*)param);
+}
+
 int main(int argc, char *argv[])
 {
 	ThreadData d;
 	HANDLE hserver, hclient, h1, h2, h3;
   InitializeCriticalSection(&d.m);
-  cv_init(&d.cv);
+  cv_init(&d.cv, TRUE);
 	d.state = Initial;
 	
 	hserver = CreateThread(NULL, 0, server_thread, (void*)&d, 0, NULL);
@@ -92,13 +82,18 @@ int main(int argc, char *argv[])
 	h2 = CreateThread(NULL, 0, client_thread, (void*)&d, 0, NULL);
 	h3 = CreateThread(NULL, 0, client_thread, (void*)&d, 0, NULL);
 	
+  SuspendThread(h2);
+  QueueUserAPC(test_apc, h2, (ULONG_PTR)"qwe1");
+  QueueUserAPC(test_apc, h2, (ULONG_PTR)"qwe2");
+  ResumeThread(h2);
+  
 	WaitForSingleObject(hserver, INFINITE);
   fprintf(stderr, "ok1\n");
 	WaitForSingleObject(hclient, INFINITE);
   fprintf(stderr, "ok2\n");
-  EnterCriticalSection(&d.m);
-  cv_bcast(&d.cv);
-  LeaveCriticalSection(&d.m);
+  //EnterCriticalSection(&d.m);
+  //cv_bcast(&d.cv);
+  //LeaveCriticalSection(&d.m);
 	WaitForSingleObject(h1, INFINITE);
   fprintf(stderr, "ok3\n");
 	WaitForSingleObject(h2, INFINITE);
@@ -111,99 +106,3 @@ int main(int argc, char *argv[])
 	
 	return 0;
 }
-
-void cv_init(struct condvar* cv)
-{
-  InitializeCriticalSection(&cv->wakeup_lock);
-  cv->first_wakeup = NULL;
-  cv->last_wakeup = NULL;
-}
-
-void cv_destroy(struct condvar* cv)
-{
-  DeleteCriticalSection(&cv->wakeup_lock);
-}
-
-void cv_print_wakeups(struct condvar* cv)
-{
-  struct thread_wakeup* w;
-  int first = 1;
-  fprintf(stderr, "For cv 0x%p, wakeup chain is: ", cv);
-  w = cv->first_wakeup;
-  while (w)
-  {
-    if (!first)
-      fprintf(stderr, ", ");
-    first = 0;
-    fprintf(stderr, "0x%p", w);
-    w = w->next;
-  }
-  fprintf(stderr, "\n");
-}
-
-void cv_wakeup_add(struct condvar* cv, struct thread_wakeup* w)
-{
-  w->event = CreateEvent(NULL, //security
-                         FALSE, //Auto Reset
-                         FALSE, //Initial state = unsignalled
-                         NULL); //Name
-  w->next = NULL;
-  EnterCriticalSection(&cv->wakeup_lock);
-  if (cv->last_wakeup != NULL)
-  {
-    cv->last_wakeup->next = w;
-    cv->last_wakeup = w;
-  }
-  else
-  {
-    cv->first_wakeup = w;
-    cv->last_wakeup = w;
-  }
-  //fprintf(stderr, "added wakeup:\n");
-  //cv_print_wakeups(cv);
-  LeaveCriticalSection(&cv->wakeup_lock);
-}
-
-void cv_wakeup_delete(struct thread_wakeup* w)
-{
-  CloseHandle(w->event);
-}
-
-void cv_wait(struct condvar* cv, CRITICAL_SECTION* cs)
-{
-  struct thread_wakeup w;
-  cv_wakeup_add(cv, &w);
-  LeaveCriticalSection(cs);
-  WaitForSingleObject(w.event, INFINITE);
-  cv_wakeup_delete(&w);
-  EnterCriticalSection(cs);
-}
-
-void cv_signal(struct condvar* cv)
-{
-  struct thread_wakeup * w;
-  EnterCriticalSection(&cv->wakeup_lock);
-  w = cv->first_wakeup;
-  if (!w) return;
-  cv->first_wakeup = w->next;
-  if (!cv->first_wakeup) cv->last_wakeup = NULL;
-  SetEvent(w->event);
-  LeaveCriticalSection(&cv->wakeup_lock);
-}
-
-void cv_bcast(struct condvar* cv)
-{
-  int count = 0;
-  EnterCriticalSection(&cv->wakeup_lock);
-  while (cv->first_wakeup)
-  {
-    struct thread_wakeup * w = cv->first_wakeup;
-    cv->first_wakeup = w->next;
-    SetEvent(w->event);
-    ++count;
-  }
-  cv->last_wakeup = NULL;
-  LeaveCriticalSection(&cv->wakeup_lock);
-  //fprintf(stderr, "bcast: woke up %d threads\n", count);
-}
-
