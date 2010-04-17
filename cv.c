@@ -65,7 +65,7 @@ void cv_wait(struct condvar* cv, CRITICAL_SECTION* cs)
   cv_wakeup_add(cv, &w);
   LeaveCriticalSection(cs);
   if (cv->alertable) {
-    while (WaitForSingleObjectEx(w.event, INFINITE, TRUE) == WAIT_ABANDONED);
+    while (WaitForSingleObjectEx(w.event, INFINITE, TRUE) == WAIT_IO_COMPLETION);
   } else {
     WaitForSingleObject(w.event, INFINITE);
   }
