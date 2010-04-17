@@ -68,12 +68,33 @@ VOID CALLBACK test_apc(ULONG_PTR param)
   fprintf(stderr, "APC!!!!! %s\n", (unsigned char*)param);
 }
 
+DWORD event_tls;
+
+HANDLE get_fn()
+{
+  HANDLE h = TlsGetValue(event_tls);
+  if (!h) {
+    h = (HANDLE)CreateEvent(NULL, FALSE, FALSE, NULL);
+    TlsSetValue(event_tls, h);
+  }
+  return h;
+}
+
+void return_fn(HANDLE h)
+{
+}
+
 int main(int argc, char *argv[])
 {
 	ThreadData d;
 	HANDLE hserver, hclient, h1, h2, h3;
   InitializeCriticalSection(&d.m);
-  cv_init(&d.cv, TRUE);
+  if (0)
+    cv_init(&d.cv, TRUE, NULL, NULL);
+  else {
+    event_tls = TlsAlloc();
+    cv_init(&d.cv, TRUE, get_fn, return_fn);
+  }
 	d.state = Initial;
 	
 	hserver = CreateThread(NULL, 0, server_thread, (void*)&d, 0, NULL);

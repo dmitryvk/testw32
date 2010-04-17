@@ -1,12 +1,24 @@
 #include <stdio.h>
 #include "cv.h"
 
-void cv_init(struct condvar* cv, unsigned char alertable)
+static HANDLE cv_default_event_get_fn()
+{
+  return CreateEvent(NULL, FALSE, FALSE, NULL);
+}
+
+static void cv_default_event_return_fn(HANDLE event)
+{
+  CloseHandle(event);
+}
+
+void cv_init(struct condvar* cv, unsigned char alertable, cv_event_get_fn get_fn, cv_event_return_fn return_fn)
 {
   InitializeCriticalSection(&cv->wakeup_lock);
   cv->first_wakeup = NULL;
   cv->last_wakeup = NULL;
   cv->alertable = alertable;
+  cv->get_fn = get_fn ? get_fn : cv_default_event_get_fn;
+  cv->return_fn = return_fn ? return_fn : cv_default_event_return_fn;
 }
 
 void cv_destroy(struct condvar* cv)
@@ -33,10 +45,7 @@ void cv_print_wakeups(struct condvar* cv)
 
 void cv_wakeup_add(struct condvar* cv, struct thread_wakeup* w)
 {
-  w->event = CreateEvent(NULL, //security
-                         FALSE, //Auto Reset
-                         FALSE, //Initial state = unsignalled
-                         NULL); //Name
+  w->event = cv->get_fn();
   w->next = NULL;
   EnterCriticalSection(&cv->wakeup_lock);
   if (cv->last_wakeup != NULL)
@@ -54,11 +63,6 @@ void cv_wakeup_add(struct condvar* cv, struct thread_wakeup* w)
   LeaveCriticalSection(&cv->wakeup_lock);
 }
 
-void cv_wakeup_delete(struct thread_wakeup* w)
-{
-  CloseHandle(w->event);
-}
-
 void cv_wait(struct condvar* cv, CRITICAL_SECTION* cs)
 {
   struct thread_wakeup w;
@@ -69,7 +73,7 @@ void cv_wait(struct condvar* cv, CRITICAL_SECTION* cs)
   } else {
     WaitForSingleObject(w.event, INFINITE);
   }
-  cv_wakeup_delete(&w);
+  cv->return_fn(w.event);
   EnterCriticalSection(cs);
 }
 
