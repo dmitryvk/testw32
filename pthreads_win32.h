@@ -39,6 +39,13 @@ int pthread_setspecific(pthread_key_t key, const void *value);
 typedef int sigset_t;
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset);
 
+/* 1a - Thread non-portable */
+
+void pthread_np_safepoint();
+void pthread_np_suspend(pthread_t thread);
+void pthread_np_resume(pthread_t thread);
+unsigned char pthread_np_interruptible(pthread_t thread);
+void pthread_np_requeset_interruption(pthread_t thread);
 
 /* 2 - Mutex */
 
