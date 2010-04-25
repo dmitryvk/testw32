@@ -38,7 +38,7 @@ typedef struct thread_args {
   pthread_fn start_routine;
   void* arg;
   HANDLE handle;
-  HANDLE waiting_event;
+  pthread_cond_t *waiting_cond;
   int uninterruptible_section_nesting;
   struct thread_args *prev, *next;
 } thread_args;
@@ -79,16 +79,24 @@ void pthread_unlink_thread_args(thread_args *args)
 thread_args* pthread_find_thread_args(HANDLE handle)
 {
   thread_args* found = NULL, *i;
+  //fprintf(stderr, " getting a pthread_all_threads_lock\n");
   pthread_mutex_lock(&pthread_all_threads_lock);
-  if (pthread_all_threads == NULL) return NULL;
-  if (pthread_all_threads->handle == handle) return pthread_all_threads;
-  for (i = pthread_all_threads->next; i != pthread_all_threads; ++i) {
-    if (i->handle == handle) {
-      found = i;
-      break;
+  //fprintf(stderr, " got a pthread_all_threads_lock\n");
+  if (pthread_all_threads == NULL) {
+    found = NULL;
+  } else if (pthread_all_threads->handle == handle) {
+    found = pthread_all_threads;
+  } else {
+    for (i = pthread_all_threads->next; i != pthread_all_threads; i = i->next) {
+      if (i->handle == handle) {
+        found = i;
+        break;
+      }
     }
   }
+  //fprintf(stderr, " releasing pthread_all_threads_lock\n");
   pthread_mutex_unlock(&pthread_all_threads_lock);
+  //fprintf(stderr, " released pthread_all_threads_lock\n");
   return found;
 }
 
@@ -110,16 +118,21 @@ unsigned char pthread_np_interruptible(pthread_t thread)
   thread_args* args = pthread_find_thread_args(thread);
   if (args == NULL)
     return 0;
-  return args->uninterruptible_section_nesting == 0;
+  return args->uninterruptible_section_nesting == 0 && args->waiting_cond == NULL;
 }
 
-void pthread_np_requeset_interruption(pthread_t thread)
+void pthread_np_request_interruption(pthread_t thread)
 {
-  thread_args* args = pthread_find_thread_args(thread);
+  thread_args* args;
+  //fprintf(stderr, " rqi: looking for args\n");
+  args = pthread_find_thread_args(thread);
   if (args == NULL)
     return;
-  if (args->waiting_event)
-    SetEvent(args->waiting_event);
+  //fprintf(stderr, " rqi:args = 0x%p\n", args);
+  if (args->waiting_cond) {
+    //fprintf(stderr, " rqi:waiting_cond = 0x%p\n", args->waiting_cond);
+    pthread_cond_broadcast(args->waiting_cond);
+  }
 }
 
 thread_args* pthread_self_args()
@@ -151,11 +164,16 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
   args->arg = arg;
   args->handle = createdThread;
   args->uninterruptible_section_nesting = 0;
-  args->waiting_event = NULL;
+  args->waiting_cond = NULL;
   ResumeThread(createdThread);
   if (thread)
     *thread = createdThread;
   return 0;
+}
+
+int pthread_equal(pthread_t thread1, pthread_t thread2)
+{
+  return thread1 == thread2;
 }
 
 int pthread_detach(pthread_t thread)
@@ -273,7 +291,7 @@ static void cv_default_event_return_fn(HANDLE event)
 
 int pthread_cond_init(pthread_cond_t * cv, const pthread_condattr_t * attr)
 {
-  InitializeCriticalSection(&cv->wakeup_lock);
+  pthread_mutex_init(&cv->wakeup_lock, NULL);
   cv->first_wakeup = NULL;
   cv->last_wakeup = NULL;
   cv->alertable = 0;
@@ -284,36 +302,45 @@ int pthread_cond_init(pthread_cond_t * cv, const pthread_condattr_t * attr)
 
 int pthread_cond_destroy(pthread_cond_t *cv)
 {
-  DeleteCriticalSection(&cv->wakeup_lock);
+  pthread_mutex_destroy(&cv->wakeup_lock);
   return 0;
 }
 
 int pthread_cond_broadcast(pthread_cond_t *cv)
 {
   int count = 0;
-  EnterCriticalSection(&cv->wakeup_lock);
+  //fprintf(stderr, ":cb:");
+  //fprintf(stderr, " cb1\n");
+  pthread_mutex_lock(&cv->wakeup_lock);
+  //fprintf(stderr, " cb2\n");
   while (cv->first_wakeup)
   {
     struct thread_wakeup * w = cv->first_wakeup;
+    //fprintf(stderr, " cb3.1 (%d, 0x%p, 0x%p)\n", count, w, w->next);
     cv->first_wakeup = w->next;
     SetEvent(w->event);
+    //fprintf(stderr, " cb3.2\n");
     ++count;
   }
   cv->last_wakeup = NULL;
-  LeaveCriticalSection(&cv->wakeup_lock);
+  pthread_mutex_unlock(&cv->wakeup_lock);
+  //fprintf(stderr, " cb4\n");
   return 0;
 }
 
 int pthread_cond_signal(pthread_cond_t *cv)
 {
   struct thread_wakeup * w;
-  EnterCriticalSection(&cv->wakeup_lock);
+  //fprintf(stderr, ":cs:");
+  pthread_mutex_lock(&cv->wakeup_lock);
   w = cv->first_wakeup;
-  if (!w) return 0;
-  cv->first_wakeup = w->next;
-  if (!cv->first_wakeup) cv->last_wakeup = NULL;
-  SetEvent(w->event);
-  LeaveCriticalSection(&cv->wakeup_lock);
+  if (w) {
+    cv->first_wakeup = w->next;
+    if (!cv->first_wakeup)
+      cv->last_wakeup = NULL;
+    SetEvent(w->event);
+  }
+  pthread_mutex_unlock(&cv->wakeup_lock);
   return 0;
 }
 
@@ -321,7 +348,7 @@ void cv_wakeup_add(struct pthread_cond_t* cv, struct thread_wakeup* w)
 {
   w->event = cv->get_fn();
   w->next = NULL;
-  EnterCriticalSection(&cv->wakeup_lock);
+  pthread_mutex_lock(&cv->wakeup_lock);
   if (cv->last_wakeup != NULL)
   {
     cv->last_wakeup->next = w;
@@ -334,22 +361,29 @@ void cv_wakeup_add(struct pthread_cond_t* cv, struct thread_wakeup* w)
   }
   //fprintf(stderr, "added wakeup:\n");
   //cv_print_wakeups(cv);
-  LeaveCriticalSection(&cv->wakeup_lock);
+  pthread_mutex_unlock(&cv->wakeup_lock);
 }
 
 int pthread_cond_wait(pthread_cond_t * cv, pthread_mutex_t * cs)
 {
   struct thread_wakeup w;
+  //fprintf(stderr, ":cw:");
   cv_wakeup_add(cv, &w);
-  LeaveCriticalSection(*cs);
+  if (cv->last_wakeup->next == cv->last_wakeup) {
+    fprintf(stderr, "cv->last_wakeup->next == cv->last_wakeup\n");
+    ExitProcess(0);
+  }
+  pthread_self_args()->waiting_cond = cv;
+  pthread_mutex_unlock(cs);
   if (cv->alertable) {
     while (WaitForSingleObjectEx(w.event, INFINITE, TRUE) == WAIT_IO_COMPLETION);
   } else {
     WaitForSingleObject(w.event, INFINITE);
   }
+  pthread_self_args()->waiting_cond = NULL;
   cv->return_fn(w.event);
   pthread_checkpoint();
-  EnterCriticalSection(*cs);
+  pthread_mutex_lock(cs);
   return 0;
 }
 
@@ -395,7 +429,7 @@ void pthreads_win32_init()
 {
   thread_args * args = (thread_args*)malloc(sizeof(thread_args));
   thread_self_tls_index = TlsAlloc();
-  args->waiting_event = NULL;
+  args->waiting_cond = NULL;
   args->uninterruptible_section_nesting = 0;
   pthread_all_threads = NULL;
   pthread_mutex_init(&mutex_init_lock, NULL);
