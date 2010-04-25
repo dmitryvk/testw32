@@ -63,6 +63,11 @@ void* client_thread(void * arg)
 	return NULL;
 }
 
+void pthread_np_safepoint()
+{
+  fprintf(stderr, "%d: safepoint\n", (int)pthread_self());
+}
+
 int main(int argc, char *argv[])
 {
 	ThreadData d;

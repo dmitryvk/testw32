@@ -229,6 +229,7 @@ int pthread_mutex_destroy(pthread_mutex_t *mutex)
 
 int pthread_mutex_lock(pthread_mutex_t *mutex)
 {
+  thread_args* args;
   if (*mutex == PTHREAD_MUTEX_INITIALIZER) {
     pthread_mutex_lock(&mutex_init_lock);
     if (*mutex == PTHREAD_MUTEX_INITIALIZER) {
@@ -237,13 +238,26 @@ int pthread_mutex_lock(pthread_mutex_t *mutex)
     }
     pthread_mutex_unlock(&mutex_init_lock);
   }
+  if ((args = pthread_self_args()))
+    args->uninterruptible_section_nesting++;
   EnterCriticalSection(*mutex);
   return 0;
 }
 
+void pthread_checkpoint()
+{
+  if (pthread_self_args()->uninterruptible_section_nesting == 0)
+    pthread_np_safepoint();
+}
+
 int pthread_mutex_unlock(pthread_mutex_t *mutex)
 {
+  thread_args* args;
   LeaveCriticalSection(*mutex);
+  if ((args = pthread_self_args())) {
+    args->uninterruptible_section_nesting--;
+    pthread_checkpoint();
+  }
   return 0;
 }
 
@@ -334,6 +348,7 @@ int pthread_cond_wait(pthread_cond_t * cv, pthread_mutex_t * cs)
     WaitForSingleObject(w.event, INFINITE);
   }
   cv->return_fn(w.event);
+  pthread_checkpoint();
   EnterCriticalSection(*cs);
   return 0;
 }
@@ -386,6 +401,6 @@ void pthreads_win32_init()
   pthread_mutex_init(&mutex_init_lock, NULL);
   pthread_mutex_init(&pthread_all_threads_lock, NULL);
   DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &args->handle, 0, TRUE, DUPLICATE_SAME_ACCESS);
-  pthread_link_thread_args(args);
   TlsSetValue(thread_self_tls_index, args);
+  pthread_link_thread_args(args);
 }
