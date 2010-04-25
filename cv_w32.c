@@ -1,7 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#include "cv.h"
+#include "pthreads_win32.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,121 +9,91 @@
 typedef enum State { Initial, ServerRequest, ClientResponse } State;
 
 typedef struct ThreadData {
-	CRITICAL_SECTION m;
-	struct condvar cv;
+	pthread_mutex_t m;
+	pthread_cond_t cv;
 	State state;
 	int server_started;
 	int arg;
 } ThreadData;
 
-DWORD WINAPI server_thread(void * arg)
+void* server_thread(void * arg)
 {
 	ThreadData* data = (ThreadData*)arg;
 	int i;
-	EnterCriticalSection(&data->m);
-	printf("Server started in %d\n", (int)GetCurrentThreadId());
+  pthread_mutex_lock(&data->m);
+	printf("Server started in %d\n", (int)pthread_self());
 	for (i = 0; i < 100; ++i) {
 		data->state = ServerRequest;
 		data->arg = i;
-		printf("%d: Server send %d\n", (int)GetCurrentThreadId(), data->arg);
-		cv_bcast(&data->cv);
+		printf("%d: Server send %d\n", (int)pthread_self(), data->arg);
+		pthread_cond_broadcast(&data->cv);
 		while (data->state != ClientResponse)
-			cv_wait(&data->cv, &data->m);
-		printf("%d: Server received %d\n", (int)GetCurrentThreadId(), data->arg);
+      pthread_cond_wait(&data->cv, &data->m);
+		printf("%d: Server received %d\n", (int)pthread_self(), data->arg);
 	}
 	data->state = ServerRequest;
 	data->arg = -1;
 	printf("Sending exit to client\n");
-	cv_bcast(&data->cv);
-	LeaveCriticalSection(&data->m);
-	return 0;
+	pthread_cond_broadcast(&data->cv);
+	pthread_mutex_unlock(&data->m);
+	return NULL;
 }
 
-DWORD WINAPI client_thread(void * arg)
+void* client_thread(void * arg)
 {
 	ThreadData* data = (ThreadData*)arg;
 	int looping = 1;
-	EnterCriticalSection(&data->m);
-	printf("Client started in %d\n", (int)GetCurrentThreadId());
+	pthread_mutex_lock(&data->m);
+	printf("Client started in %d\n", (int)pthread_self());
 	while (looping) {
 		while (data->state != ServerRequest)
-			cv_wait(&data->cv, &data->m);
-		printf("%d: Client received: %d\n", (int)GetCurrentThreadId(), data->arg);
+			pthread_cond_wait(&data->cv, &data->m);
+		printf("%d: Client received: %d\n", (int)pthread_self(), data->arg);
 		if (data->arg == -1) {
-			printf("%d: Client exiting\n", (int)GetCurrentThreadId());
+			printf("%d: Client exiting\n", (int)pthread_self());
 			looping = 0;
 		} else {
 			data->arg = data->arg * data->arg;
 			data->state = ClientResponse;
-			printf("%d: Client sent %d\n", (int)GetCurrentThreadId(), data->arg);
-			cv_bcast(&data->cv);
+			printf("%d: Client sent %d\n", (int)pthread_self(), data->arg);
+			pthread_cond_broadcast(&data->cv);
 		}
 	}
-	LeaveCriticalSection(&data->m);
-	return 0;
-}
-
-VOID CALLBACK test_apc(ULONG_PTR param)
-{
-  fprintf(stderr, "APC!!!!! %s\n", (unsigned char*)param);
-}
-
-DWORD event_tls;
-
-HANDLE get_fn()
-{
-  HANDLE h = TlsGetValue(event_tls);
-  if (!h) {
-    h = (HANDLE)CreateEvent(NULL, FALSE, FALSE, NULL);
-    TlsSetValue(event_tls, h);
-  }
-  return h;
-}
-
-void return_fn(HANDLE h)
-{
+	pthread_mutex_unlock(&data->m);
+	return NULL;
 }
 
 int main(int argc, char *argv[])
 {
 	ThreadData d;
-	HANDLE hserver, hclient, h1, h2, h3;
-  InitializeCriticalSection(&d.m);
-  if (0)
-    cv_init(&d.cv, TRUE, NULL, NULL);
-  else {
-    event_tls = TlsAlloc();
-    cv_init(&d.cv, TRUE, get_fn, return_fn);
-  }
+	pthread_t hserver, hclient, h1, h2, h3;
+  pthreads_win32_init();
+  pthread_mutex_init(&d.m, NULL);
+  pthread_cond_init(&d.cv, NULL);
 	d.state = Initial;
 	
-	hserver = CreateThread(NULL, 0, server_thread, (void*)&d, 0, NULL);
-	hclient = CreateThread(NULL, 0, client_thread, (void*)&d, 0, NULL);
-	h1 = CreateThread(NULL, 0, client_thread, (void*)&d, 0, NULL);
-	h2 = CreateThread(NULL, 0, client_thread, (void*)&d, 0, NULL);
-	h3 = CreateThread(NULL, 0, client_thread, (void*)&d, 0, NULL);
+	pthread_create(&hserver, NULL, server_thread, (void*)&d);
+	pthread_create(&hclient, NULL, client_thread, (void*)&d);
+	pthread_create(&h1, NULL, client_thread, (void*)&d);
+	pthread_create(&h2, NULL, client_thread, (void*)&d);
+	pthread_create(&h3, NULL, client_thread, (void*)&d);
 	
-  SuspendThread(h2);
-  QueueUserAPC(test_apc, h2, (ULONG_PTR)"qwe1");
-  QueueUserAPC(test_apc, h2, (ULONG_PTR)"qwe2");
-  ResumeThread(h2);
-  
-	WaitForSingleObject(hserver, INFINITE);
+	pthread_join(hserver, NULL);
   fprintf(stderr, "ok1\n");
-	WaitForSingleObject(hclient, INFINITE);
+	pthread_join(hclient, NULL);
   fprintf(stderr, "ok2\n");
   //EnterCriticalSection(&d.m);
   //cv_bcast(&d.cv);
   //LeaveCriticalSection(&d.m);
-	WaitForSingleObject(h1, INFINITE);
+	pthread_join(h1, NULL);
   fprintf(stderr, "ok3\n");
-	WaitForSingleObject(h2, INFINITE);
+	pthread_join(h2, NULL);
   fprintf(stderr, "ok4\n");
-	WaitForSingleObject(h3, INFINITE);
+	pthread_join(h3, NULL);
   fprintf(stderr, "ok5\n");
   
-  cv_destroy(&d.cv);
-  DeleteCriticalSection(&d.m);
+  pthread_cond_destroy(&d.cv);
+  pthread_mutex_destroy(&d.m);
 	
 	return 0;
 }
