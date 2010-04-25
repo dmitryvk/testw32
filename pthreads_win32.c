@@ -122,6 +122,11 @@ void pthread_np_requeset_interruption(pthread_t thread)
     SetEvent(args->waiting_event);
 }
 
+thread_args* pthread_self_args()
+{
+  return (thread_args*)TlsGetValue(thread_self_tls_index);
+}
+
 DWORD WINAPI Thread_Function(LPVOID param)
 {
   thread_args *args = (thread_args*)param;
@@ -172,8 +177,7 @@ int pthread_join(pthread_t thread, void **retval)
 
 pthread_t pthread_self(void)
 {
-  thread_args *args = (thread_args*)TlsGetValue(thread_self_tls_index);
-  return args->handle;
+  return pthread_self_args()->handle;
 }
 
 int pthread_key_create(pthread_key_t *key, void (*destructor)(void*))
