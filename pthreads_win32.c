@@ -79,9 +79,7 @@ void pthread_unlink_thread_args(thread_args *args)
 thread_args* pthread_find_thread_args(HANDLE handle)
 {
   thread_args* found = NULL, *i;
-  //fprintf(stderr, " getting a pthread_all_threads_lock\n");
   pthread_mutex_lock(&pthread_all_threads_lock);
-  //fprintf(stderr, " got a pthread_all_threads_lock\n");
   if (pthread_all_threads == NULL) {
     found = NULL;
   } else if (pthread_all_threads->handle == handle) {
@@ -94,9 +92,7 @@ thread_args* pthread_find_thread_args(HANDLE handle)
       }
     }
   }
-  //fprintf(stderr, " releasing pthread_all_threads_lock\n");
   pthread_mutex_unlock(&pthread_all_threads_lock);
-  //fprintf(stderr, " released pthread_all_threads_lock\n");
   return found;
 }
 
@@ -124,13 +120,10 @@ unsigned char pthread_np_interruptible(pthread_t thread)
 void pthread_np_request_interruption(pthread_t thread)
 {
   thread_args* args;
-  //fprintf(stderr, " rqi: looking for args\n");
   args = pthread_find_thread_args(thread);
   if (args == NULL)
     return;
-  //fprintf(stderr, " rqi:args = 0x%p\n", args);
   if (args->waiting_cond) {
-    //fprintf(stderr, " rqi:waiting_cond = 0x%p\n", args->waiting_cond);
     pthread_cond_broadcast(args->waiting_cond);
   }
 }
@@ -309,29 +302,22 @@ int pthread_cond_destroy(pthread_cond_t *cv)
 int pthread_cond_broadcast(pthread_cond_t *cv)
 {
   int count = 0;
-  //fprintf(stderr, ":cb:");
-  //fprintf(stderr, " cb1\n");
   pthread_mutex_lock(&cv->wakeup_lock);
-  //fprintf(stderr, " cb2\n");
   while (cv->first_wakeup)
   {
     struct thread_wakeup * w = cv->first_wakeup;
-    //fprintf(stderr, " cb3.1 (%d, 0x%p, 0x%p)\n", count, w, w->next);
     cv->first_wakeup = w->next;
     SetEvent(w->event);
-    //fprintf(stderr, " cb3.2\n");
     ++count;
   }
   cv->last_wakeup = NULL;
   pthread_mutex_unlock(&cv->wakeup_lock);
-  //fprintf(stderr, " cb4\n");
   return 0;
 }
 
 int pthread_cond_signal(pthread_cond_t *cv)
 {
   struct thread_wakeup * w;
-  //fprintf(stderr, ":cs:");
   pthread_mutex_lock(&cv->wakeup_lock);
   w = cv->first_wakeup;
   if (w) {
@@ -359,15 +345,12 @@ void cv_wakeup_add(struct pthread_cond_t* cv, struct thread_wakeup* w)
     cv->first_wakeup = w;
     cv->last_wakeup = w;
   }
-  //fprintf(stderr, "added wakeup:\n");
-  //cv_print_wakeups(cv);
   pthread_mutex_unlock(&cv->wakeup_lock);
 }
 
 int pthread_cond_wait(pthread_cond_t * cv, pthread_mutex_t * cs)
 {
   struct thread_wakeup w;
-  //fprintf(stderr, ":cw:");
   cv_wakeup_add(cv, &w);
   if (cv->last_wakeup->next == cv->last_wakeup) {
     fprintf(stderr, "cv->last_wakeup->next == cv->last_wakeup\n");
@@ -399,7 +382,6 @@ int pthread_cond_timedwait(pthread_cond_t * cv, pthread_mutex_t * cs, const stru
     gettimeofday(&cur_tm, NULL);
     sec = abstime->tv_sec - cur_tm.tv_sec;
     msec = sec * 1000 + abstime->tv_nsec / 1000000 - cur_tm.tv_usec / 1000;
-    //fprintf(stderr, "Waiting for %ld msec\n", msec);
     if (msec < 0)
       msec = 0;
     if (cv->alertable) {
@@ -407,12 +389,9 @@ int pthread_cond_timedwait(pthread_cond_t * cv, pthread_mutex_t * cs, const stru
     } else {
       rv = WaitForSingleObject(w.event, msec);
     }
-    //fprintf(stderr, "Waiting done (%s)\n", rv == WAIT_TIMEOUT ? "timeout" : "condition_signalled");
   }
   cv->return_fn(w.event);
-  //fprintf(stderr, "Condvar, reentering CS\n");
   EnterCriticalSection(*cs);
-  //fprintf(stderr, "Condvar, in CS\n");
   if (rv == WAIT_TIMEOUT)
     return ETIMEDOUT;
   else
