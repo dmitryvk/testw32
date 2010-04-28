@@ -100,11 +100,9 @@ void pthread_np_safepoint()
 {
   thread_information* inf;
   //fprintf(stderr, "%d: safepoint\n", (int)pthread_self());
-  if (suspend_pending && !(inf = get_current_thread_information())->suspending) {
+  if (suspend_pending && !(inf = get_current_thread_information())->suspending && !inf->gc_master) {
     inf->suspending = 1;
-    fprintf(stderr, " sp:suspending\n");
     set_thread_state(NULL, Suspended);
-    fprintf(stderr, " sp:%d: suspended\n", (int)pthread_self());
     wait_for_thread_state(NULL, Running);
     inf->suspending = 0;
   }
@@ -113,41 +111,28 @@ void pthread_np_safepoint()
 void suspend_thread(thread_information* thread)
 {
   pthread_t p_thread = thread->thread;
-  //fprintf(stderr, "Suspending 0x%p\n", p_thread);
   pthread_np_suspend(p_thread);
-  //fprintf(stderr, " SuspendThread OK\n");
   if (get_thread_state(thread) == Suspended) {
     thread->suspended_by_suspend = 0;
     pthread_np_resume(p_thread);
   } else if (pthread_np_interruptible(p_thread)) {
-    //fprintf(stderr, " is interruptible\n");
     thread->suspended_by_suspend = 1;
     set_thread_state(thread, Suspended);
-    //fprintf(stderr, " had set state to suspended\n");
   } else {
-    //fprintf(stderr, " is NOT interruptible\n");
     thread->suspended_by_suspend = 0;
-    //fprintf(stderr, " requesting interruption\n");
     pthread_np_request_interruption(p_thread);
-    //fprintf(stderr, " interruption requested\n");
     pthread_np_resume(p_thread);
-    //fprintf(stderr, " resumed\n");
     wait_for_thread_state(thread, Suspended);
-    //fprintf(stderr, " had waited to suspend\n");
   }
 }
 
 void resume_thread(thread_information* thread)
 {
   pthread_t p_thread = thread->thread;
-  //fprintf(stderr, "  rt:0x%p, 1\n", p_thread);
   set_thread_state(thread, Running);
-  //fprintf(stderr, "  rt:0x%p, 2\n", p_thread);
   if (thread->suspended_by_suspend) {
-    //fprintf(stderr, "  rt:0x%p, 3\n", p_thread);
     pthread_np_resume(p_thread);
   }
-  //fprintf(stderr, "  rt:0x%p, 4\n", p_thread);
 }
 
 void suspend_threads()
@@ -187,7 +172,6 @@ void gc()
   fprintf(stderr, "I'm gcing! 1. Suspend\n");
   suspend_threads();
   fprintf(stderr, "Suspended. GCing\n");
-  //Sleep(1000);
   fprintf(stderr, "2. Resume\n");
   resume_threads();
 }
@@ -200,7 +184,7 @@ void* server_thread(void * arg)
   pthread_mutex_lock(&data->m);
 	printf("Server started in %d\n", (int)pthread_self());
   while (1) {
-    for (i = 0; i < 100; ++i) {
+    for (i = 0; i < 1000; ++i) {
       data->state = ServerRequest;
       data->arg = i;
       //printf("%d: Server send %d\n", (int)pthread_self(), data->arg);
@@ -224,7 +208,7 @@ void* server_thread(void * arg)
 void* client_thread(void * arg)
 {
 	ThreadData* data = (ThreadData*)arg;
-	int looping = 1;
+	int looping = 1, i = 0;
   register_self();
 	pthread_mutex_lock(&data->m);
 	printf("Client started in %d\n", (int)pthread_self());
@@ -241,6 +225,9 @@ void* client_thread(void * arg)
 			//printf("%d: Client sent %d\n", (int)pthread_self(), data->arg);
 			pthread_cond_broadcast(&data->cv);
 		}
+    i = (i + 1) % 1000;
+    if (i == 0)
+      fprintf(stderr, "  Client 0x%p is working\n", pthread_self());
 	}
 	pthread_mutex_unlock(&data->m);
 	return NULL;
